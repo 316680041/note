@@ -7,3 +7,5 @@ git remote add origin https://github.com/316680041/myshell
 
 git push -u origin master
 git pull pull --rebase origin master
+
+git branch --set-upstream-to=origin/master master
