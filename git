@@ -1,0 +1,6 @@
+初始化git
+eval $(ssh-agent -s)
+ssh-add
+
+
+git remote add origin https://github.com/316680041/myshell
