@@ -1,1 +1,235 @@
 #
+mysql -e "CREATE DATABASE IF NOT EXISTS manila;"
+
+mysql -e "GRANT ALL PRIVILEGES ON manila.* TO 'manila'@'localhost' IDENTIFIED BY 'Passw0rd';"
+mysql -e "GRANT ALL PRIVILEGES ON manila.* TO 'manila'@'%' IDENTIFIED BY 'Passw0rd';"
+
+openstack user create --password Passw0rd manila
+openstack role add --user manila --project services admin
+
+openstack service create --name manila  --description "OpenStack Shared File Systems" share
+openstack service create --name manilav2   --description "OpenStack Shared File Systems" sharev2
+
+openstack endpoint create \
+    --region BJ_Region \
+    --publicurl http://10.0.50.230:8786/v1/%\(tenant_id\)s \
+    --internalurl http://10.0.50.230:8786/v1/%\(tenant_id\)s \
+    --adminurl http://10.0.50.230:8786/v1/%\(tenant_id\)s \
+    share
+    
+openstack endpoint create \
+    --region BJ_Region \
+    --publicurl http://10.0.50.230:8786/v2/%\(tenant_id\)s \
+    --internalurl http://10.0.50.230:8786/v2/%\(tenant_id\)s \
+    --adminurl http://10.0.50.230:8786/v2/%\(tenant_id\)s \
+    sharev2
+
+
+/etc/haproxy/haproxy.cfg
+
+frontend vip-manila
+    bind 10.0.50.230:8786
+    timeout client 90s
+    default_backend manila-vms
+backend manila-vms
+    balance roundrobin
+    timeout server 90s
+    server con01 con01:8786 check inter 1s
+    server con02 con02:8786 check inter 1s
+    server con03 con03:8786 check inter 1s
+
+
+glance image-create --name "manila-service-image-new" --file /opt/manila-service-image-new --disk-format qcow2 --container-format bare --is-public True --progress
+#glance image-create --name "manila-service-image-new" --file manila-service-image.qcow2 --disk-format qcow2 --container-format bare --visibility public --progress
+
+controller
+yum install openstack-manila python-manila python-manilaclient -y
+
+/etc/manila/manila.conf
+osapi_share_listen=localip
+
+[DATABASE]
+connection=mysql://manila:Passw0rd@123@10.0.50.230/manila?charset=utf8
+
+[DEFAULT]
+osapi_share_listen=10.0.50.231
+api_paste_config=/etc/manila/api-paste.ini
+state_path=/var/lib/manila
+glance_host=10.0.50.230
+sql_idle_timeout=3600
+storage_availability_zone=nova
+rootwrap_config=/etc/manila/rootwrap.conf
+auth_strategy=keystone
+enabled_share_backends=backend
+nova_catalog_info=compute:nova:publicURL
+nova_catalog_admin_info=compute:nova:adminURL
+nova_api_insecure=False
+nova_admin_username=nova
+nova_admin_password=Passw0rd
+nova_admin_tenant_name=services
+nova_admin_auth_url=http://10.0.50.230:5000/v2.0
+network_api_class=manila.network.neutron.neutron_network_plugin.NeutronNetworkPlugin
+lock_path=/tmp/manila/manila_locks
+debug=True
+verbose=True
+log_dir=/var/log/manila
+use_syslog=False
+rpc_backend=manila.openstack.common.rpc.impl_kombu
+control_exchange=openstack
+amqp_durable_queues=False
+cinder_catalog_info=volume:cinder:publicURL
+neutron_api_insecure=False
+cinder_admin_username=cinder
+neutron_auth_strategy=keystone
+cinder_admin_password=Passw0rd
+notification_driver=messaging
+neutron_admin_tenant_name=services
+cinder_cross_az_attach=True
+neutron_url=http://10.0.50.230:9696
+cinder_api_insecure=False
+cinder_admin_auth_url=http://10.0.50.230:5000/v2.0
+cinder_http_retries=3
+cinder_admin_tenant_name=services
+neutron_admin_username=neutron
+neutron_admin_password=Passw0rd
+neutron_admin_auth_url=http://10.0.50.230:5000/v2.0
+neutron_url_timeout=30
+default_share_type=default_share_type
+
+[backend]
+path_to_private_key=~/.ssh/id_rsa
+service_network_division_mask=24
+volume_name_template=manila-share-%s
+service_instance_network_helper_type=neutron
+max_time_to_build_instance=300
+share_mount_path=/shares
+service_instance_password=manila
+manila_service_keypair_name=manila-service
+max_time_to_create_volume=180
+service_network_name=manila_service_network
+interface_driver=manila.network.linux.interface.OVSInterfaceDriver
+service_network_cidr=10.0.50.0/24
+service_instance_flavor_id=3
+path_to_public_key=~/.ssh/id_rsa.pub
+service_instance_smb_config_path=$share_mount_path/smb.conf
+volume_snapshot_name_template=manila-snapshot-%s
+share_backend_name=backend
+smb_template_config_path=$state_path/smb.conf
+service_image_name=manila-service-image-new
+driver_handles_share_servers=True
+service_instance_name_template=manila_service_instance_%s
+share_driver=manila.share.drivers.generic.GenericShareDriver
+service_instance_user=manila
+max_time_to_attach=120
+share_helpers=CIFS=manila.share.drivers.generic.CIFSHelper,NFS=manila.share.drivers.generic.NFSHelper
+share_volume_fstype=ext4
+service_instance_security_group=manila-service
+connect_share_server_to_tenant_network=False
+service_protocol = http
+service_host = 10.0.50.230
+service_port = 5000
+auth_host = 10.0.50.230
+auth_port = 35357
+auth_protocol = http
+admin_tenant_name = services
+admin_user = manila
+admin_password = Passw0rd
+signing_dir = /var/lib/manila
+auth_uri=http://10.0.50.230:5000/
+
+
+[oslo_messaging_rabbit]
+rabbit_ha_queues=False
+rabbit_userid=guest
+rabbit_password=guest
+rabbit_port=5672
+rabbit_use_ssl=False
+rabbit_virtual_host=/
+rabbit_host=10.0.50.231,10.0.50.232,10.0.50.233
+rabbit_hosts=10.0.50.231:5672,10.0.50.232:5672,10.0.50.233:5672
+
+
+
+/etc/manila/api_paste.ini
+[composite:osapi_share]
+use = call:manila.api:root_app_factory
+/: apiversions
+/v1: openstack_share_api_v1
+
+[composite:openstack_share_api_v1]
+use = call:manila.api.middleware.auth:pipeline_factory
+noauth = faultwrap sizelimit noauth apiv1
+keystone = faultwrap sizelimit authtoken keystonecontext apiv1
+keystone_nolimit = faultwrap sizelimit authtoken keystonecontext apiv1
+
+[filter:faultwrap]
+paste.filter_factory = manila.api.middleware.fault:FaultWrapper.factory
+
+[filter:noauth]
+paste.filter_factory = manila.api.middleware.auth:NoAuthMiddleware.factory
+
+[filter:sizelimit]
+paste.filter_factory = manila.api.middleware.sizelimit:RequestBodySizeLimiter.factory
+
+[app:apiv1]
+paste.app_factory = manila.api.v1.router:APIRouter.factory
+
+[pipeline:apiversions]
+pipeline = faultwrap osshareversionapp
+
+[app:osshareversionapp]
+paste.app_factory = manila.api.versions:Versions.factory
+
+[filter:keystonecontext]
+paste.filter_factory = manila.api.middleware.auth:ManilaKeystoneContext.factory
+
+[filter:authtoken]
+paste.filter_factory = keystoneclient.middleware.auth_token:filter_factory
+service_protocol = http
+service_host = 10.0.50.230
+service_port = 5000
+auth_host = 10.0.50.230
+auth_port = 35357
+auth_protocol = http
+admin_tenant_name = services
+admin_user = manila
+admin_password = Passw0rd
+signing_dir = /var/lib/manila
+auth_uri=http://10.0.50.230:5000/
+
+
+su -s /bin/sh -c "manila-manage db sync" manila
+
+
+systemctl start openstack-manila-api
+systemctl start openstack-manila-scheduler
+systemctl enable openstack-manila-api
+systemctl enable openstack-manila-scheduler
+
+yum install openstack-manila-ui -y
+
+service httpd restart
+
+compute
+yum install openstack-manila-share python-manila -y
+
+systemctl start openstack-manila-share
+systemctl enable openstack-manila-share
+
+
+manila service-list
+
+manila type-create default_share_type True
+
+systemctl restart openstack-manila-api
+systemctl restart openstack-manila-scheduler
+
+neutron net-list
+
+manila share-network-create --name manila_share --neutron-net-id 1bf785a3-e757-40d0-b81a-3ea1099f8cb1 --neutron-subnet-id 93a87d0b-045a-484c-bb61-6313233dfa0d 
+ 
+ 
+manila create --name testshare NFS 10  --share-network 2a6a6b2c-f3db-43d6-a85c-ee2c33d6d77a 
+
+
+manila access-allow testshare ip 0.0.0.0 --access-level rw
